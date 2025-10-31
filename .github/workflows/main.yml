@@ -1,53 +1,12 @@
 name: Setup ngrok and Remote Desktop
 
 on:
-  workflow_dispatch:
-    inputs:
-      instance_count:
-        description: "How many instances do you want to start?"
-        required: true
-        default: "1"
-        type: choice
-        options:
-          - "1"
-          - "2"
-          - "3"
-          - "4"
-          - "5"
-          - "6"
-          - "7"
-          - "8"
-          - "9"
-          - "10"
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   setup-ngrok:
     runs-on: windows-latest
     timeout-minutes: 360  # Max allowed: 6 hours
-    strategy:
-      matrix:
-        instance: [1]
-    # Dynamically expand the matrix based on user input
-    outputs:
-      matrix_json: ${{ steps.set-matrix.outputs.matrix_json }}
-
-    steps:
-      - id: set-matrix
-        run: |
-          $count = [int]("${{ github.event.inputs.instance_count }}")
-          $instances = @()
-          for ($i = 1; $i -le $count; $i++) {
-            $instances += @{ instance = $i }
-          }
-          $matrixJson = ConvertTo-Json @{ include = $instances }
-          "matrix_json=$matrixJson" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-
-  run-instances:
-    needs: setup-ngrok
-    runs-on: windows-latest
-    timeout-minutes: 360
-    strategy:
-      matrix: ${{ fromJson(needs.setup-ngrok.outputs.matrix_json) }}
 
     steps:
       - name: Checkout repository
@@ -67,12 +26,10 @@ jobs:
             $retry--
           }
           if (!(Test-Path ngrok.zip)) { throw "❌ Failed to download ngrok after retries." }
-
       - name: Extract ngrok
         run: |
           Expand-Archive ngrok.zip -DestinationPath .
           if (!(Test-Path .\ngrok.exe)) { throw "❌ Failed to extract ngrok." }
-
       - name: Update ngrok
         run: .\ngrok.exe update
 
@@ -86,20 +43,17 @@ jobs:
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1
-
       - name: Set Password for runneradmin
         run: |
           $user = Get-LocalUser -Name "runneradmin"
           if ($user.Enabled -eq $false) { Enable-LocalUser -Name "runneradmin" }
           $secPass = ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $secPass
-
       - name: Start ngrok TCP tunnel (RDP port)
         run: |
-          Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389 --log ngrok.log" -WindowStyle Hidden
+          Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389" -WindowStyle Hidden
           Start-Sleep -Seconds 10
           Get-Content ngrok.log -ErrorAction SilentlyContinue
-
       - name: Display connection info
         run: |
           $apiUrl = "http://127.0.0.1:4040/api/tunnels"
@@ -107,18 +61,17 @@ jobs:
             $response = Invoke-RestMethod -Uri $apiUrl
             $tcpAddr = ($response.tunnels | Where-Object { $_.proto -eq "tcp" }).public_url
             if ($tcpAddr) {
-              Write-Output "✅ Instance #${{ matrix.instance }} Connect using: $tcpAddr"
+              Write-Output "✅ Connect using: $tcpAddr"
             } else {
               Write-Output "⚠️ Unable to fetch tunnel info yet."
             }
           } catch {
             Write-Output "⚠️ Ngrok API not responding."
           }
-
       - name: Keep Alive (6 hours)
         run: |
           for ($i = 0; $i -lt 72; $i++) {
-            Write-Host "⏳ Instance #${{ matrix.instance }} still alive... ($($i * 5) minutes)"
+            Write-Host "⏳ Still alive... Hour: $($i * 5) minutes"
             Start-Sleep -Seconds 300
           }
         continue-on-error: true
