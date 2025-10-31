@@ -1,26 +1,55 @@
-name: Setup ngrok and Remote Desktop (32GB RAM, 28 CPU)
+name: Setup ngrok and Remote Desktop
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:
+    inputs:
+      instance_count:
+        description: "How many instances do you want to start?"
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+          - "6"
+          - "7"
+          - "8"
+          - "9"
+          - "10"
 
 jobs:
   setup-ngrok:
-    name: Windows RDP (32GB RAM, 28 CPU)
     runs-on: windows-latest
     timeout-minutes: 360  # Max allowed: 6 hours
+    strategy:
+      matrix:
+        instance: [1]
+    # Dynamically expand the matrix based on user input
+    outputs:
+      matrix_json: ${{ steps.set-matrix.outputs.matrix_json }}
 
     steps:
-      - name: ⚙️ Simulate High Performance System
+      - id: set-matrix
         run: |
-          Write-Host "🔧 Initializing high-performance configuration..."
-          Write-Host "🧠 RAM Assigned: 32 GB (simulated)"
-          Write-Host "💻 CPU Cores Assigned: 28 (simulated)"
-          Write-Host "✅ Configuration applied successfully!"
-          Write-Host "------------------------------------------"
-          Write-Host "⚠️ Note: GitHub-hosted runners have fixed hardware limits."
-          Write-Host "⚙️ This is a simulated setting for display/logging only."
-          Write-Host "------------------------------------------"
+          $count = [int]("${{ github.event.inputs.instance_count }}")
+          $instances = @()
+          for ($i = 1; $i -le $count; $i++) {
+            $instances += @{ instance = $i }
+          }
+          $matrixJson = ConvertTo-Json @{ include = $instances }
+          "matrix_json=$matrixJson" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
+  run-instances:
+    needs: setup-ngrok
+    runs-on: windows-latest
+    timeout-minutes: 360
+    strategy:
+      matrix: ${{ fromJson(needs.setup-ngrok.outputs.matrix_json) }}
+
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -67,7 +96,7 @@ jobs:
 
       - name: Start ngrok TCP tunnel (RDP port)
         run: |
-          Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389" -WindowStyle Hidden
+          Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389 --log ngrok.log" -WindowStyle Hidden
           Start-Sleep -Seconds 10
           Get-Content ngrok.log -ErrorAction SilentlyContinue
 
@@ -78,11 +107,7 @@ jobs:
             $response = Invoke-RestMethod -Uri $apiUrl
             $tcpAddr = ($response.tunnels | Where-Object { $_.proto -eq "tcp" }).public_url
             if ($tcpAddr) {
-              Write-Output "✅ Connect using: $tcpAddr"
-              Write-Output "👤 Username: runneradmin"
-              Write-Output "🔑 Password: P@ssw0rd!"
-              Write-Output "🧠 RAM: 32 GB (simulated)"
-              Write-Output "⚙️ CPU: 28 Cores (simulated)"
+              Write-Output "✅ Instance #${{ matrix.instance }} Connect using: $tcpAddr"
             } else {
               Write-Output "⚠️ Unable to fetch tunnel info yet."
             }
@@ -93,7 +118,7 @@ jobs:
       - name: Keep Alive (6 hours)
         run: |
           for ($i = 0; $i -lt 72; $i++) {
-            Write-Host "⏳ Still alive... $($i * 5) minutes passed"
+            Write-Host "⏳ Instance #${{ matrix.instance }} still alive... ($($i * 5) minutes)"
             Start-Sleep -Seconds 300
           }
         continue-on-error: true
